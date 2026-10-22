@@ -1,0 +1,14 @@
+{
+  "name": "selokbelok",
+  "version": "0.1.0",
+  "description": "Community-driven navigation for Malaysia — live traffic, police, flood and hazard reports, Waze-style.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT"
+}

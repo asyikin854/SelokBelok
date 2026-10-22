@@ -1,0 +1,10 @@
+{
+  "name": "SelokBelok",
+  "short_name": "SelokBelok",
+  "description": "Navigasi komuniti untuk Malaysia",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#33ccff",
+  "theme_color": "#33ccff",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
