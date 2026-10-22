@@ -1,6 +1,11 @@
 import { KL_CENTER, MALAYSIA_BOUNDS, inMalaysia, haversine, cumulativeDistances, nearestOnPolyline, reportsOnRoute, rankRoutes } from './geo.js';
 import { REPORT_TYPES } from './reportTypes.js';
 import { t, getLang, setLang, speechLang, formatDistance, formatDuration, instruction } from './i18n.js';
+import { CONFIG } from './config.js';
+import { createBackend } from './backend.js';
+import { say, stopSpeaking, keepScreenOn } from './native.js';
+
+const backend = createBackend(CONFIG);
 
 const $ = (id) => document.getElementById(id);
 const OFF_ROUTE_M = 60;
@@ -26,10 +31,7 @@ const map = L.map('map', {
   minZoom: 6,
 }).setView(KL_CENTER, 12);
 
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-}).addTo(map);
+L.tileLayer(CONFIG.tileUrl, { maxZoom: 19, attribution: CONFIG.tileAttribution }).addTo(map);
 
 const meMarker = L.marker(KL_CENTER, { icon: L.divIcon({ className: '', html: '<div class="me-marker"></div>', iconSize: [22, 22] }), zIndexOffset: 1000 });
 const destMarker = L.marker(KL_CENTER, { icon: L.divIcon({ className: 'dest-marker', html: '📍', iconSize: [32, 32], iconAnchor: [16, 30] }) });
@@ -46,25 +48,7 @@ function toast(msg, ms = 2500) {
   toastTimer = setTimeout(() => el.classList.add('hidden'), ms);
 }
 
-function speak(text) {
-  if (!('speechSynthesis' in window)) return;
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = speechLang();
-  const voice = speechSynthesis.getVoices().find((v) => v.lang.startsWith(getLang()));
-  if (voice) u.voice = voice;
-  speechSynthesis.speak(u);
-}
-
-async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    ...opts,
-    headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
-  return data;
-}
+const speak = (text) => say(text, speechLang());
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const origin = () => state.me ?? [map.getCenter().lat, map.getCenter().lng];
@@ -123,7 +107,7 @@ function reportPopup(r) {
     </div>`;
   const vote = (stillThere) => async () => {
     try {
-      await api(`/api/reports/${r.id}/vote`, { method: 'POST', body: { stillThere } });
+      await backend.vote(r.id, stillThere);
       toast(t().thanks);
     } catch (err) {
       toast(err.message);
@@ -160,7 +144,7 @@ const allReports = () => [...state.reports.values()].map((e) => e.data);
 
 async function loadReports() {
   try {
-    const list = await api('/api/reports');
+    const list = await backend.listReports();
     const ids = new Set(list.map((r) => r.id));
     for (const r of allReports()) if (!ids.has(r.id)) removeReport(r);
     list.forEach(upsertReport);
@@ -169,26 +153,30 @@ async function loadReports() {
   }
 }
 
+const statusText = () => (!backend.shared ? t().deviceOnly : $('status').classList.contains('live') ? t().live : t().offline);
+
 function connectStream() {
-  const es = new EventSource('/api/stream');
   const status = $('status');
-  es.onopen = () => {
-    status.classList.add('live');
-    $('status-text').textContent = t().live;
-    loadReports(); // catch up on anything missed while disconnected
-  };
-  es.onerror = () => {
-    status.classList.remove('live');
-    $('status-text').textContent = t().offline;
-  };
-  es.addEventListener('added', (e) => {
-    upsertReport(JSON.parse(e.data));
-    onReportsChanged();
-  });
-  es.addEventListener('updated', (e) => upsertReport(JSON.parse(e.data)));
-  es.addEventListener('removed', (e) => {
-    removeReport(JSON.parse(e.data));
-    onReportsChanged();
+  backend.subscribe({
+    open() {
+      status.classList.add('live');
+      status.classList.toggle('local', !backend.shared);
+      $('status-text').textContent = statusText();
+      loadReports(); // catch up on anything missed while disconnected
+    },
+    error() {
+      status.classList.remove('live');
+      $('status-text').textContent = statusText();
+    },
+    added(r) {
+      upsertReport(r);
+      onReportsChanged();
+    },
+    updated: upsertReport,
+    removed(r) {
+      removeReport(r);
+      onReportsChanged();
+    },
   });
 }
 
@@ -251,10 +239,7 @@ async function sendReport() {
   const [lat, lng] = origin();
   $('report-send').disabled = true;
   try {
-    const { report, merged } = await api('/api/reports', {
-      method: 'POST',
-      body: { ...draft, lat, lng, note: $('report-note').value },
-    });
+    const { report, merged } = await backend.addReport({ ...draft, lat, lng, note: $('report-note').value });
     upsertReport(report);
     toast(merged ? t().reportMerged : t().reportSent);
     closeReportSheet();
@@ -291,7 +276,7 @@ async function search(q) {
   list.classList.remove('hidden');
   try {
     const [lat, lng] = origin();
-    const results = await api(`/api/geocode?q=${encodeURIComponent(q)}&near=${lat},${lng}`);
+    const results = await backend.geocode(q, [lat, lng]);
     if (seq !== searchSeq) return;
     list.innerHTML = results.length ? '' : `<li class="muted">${t().noResults}</li>`;
     for (const r of results) {
@@ -318,7 +303,7 @@ map.on('contextmenu', async (e) => {
   const p = { lat: e.latlng.lat, lng: e.latlng.lng, name: `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`, address: '' };
   setDestination(p);
   try {
-    const rev = await api(`/api/reverse?at=${p.lat},${p.lng}`);
+    const rev = await backend.reverse([p.lat, p.lng]);
     if (state.dest === p) {
       p.name = rev.name || p.name;
       p.address = rev.address;
@@ -345,7 +330,7 @@ async function setDestination(dest) {
 async function planRoute(from) {
   const dest = state.dest;
   try {
-    const routes = await api(`/api/route?from=${from.join(',')}&to=${dest.lat},${dest.lng}`);
+    const routes = await backend.route(from, [dest.lat, dest.lng]);
     if (state.dest !== dest) return false;
     state.routes = rankRoutes(routes, allReports());
     state.selected = 0;
@@ -444,7 +429,7 @@ function startNav(simulated) {
   for (const id of ['nav-banner', 'nav-footer']) $(id).classList.remove('hidden');
   document.body.classList.add('navigating');
   setSheet(true);
-  navigator.wakeLock?.request('screen').then((l) => (state.nav.wakeLock = l)).catch(() => {});
+  keepScreenOn(true);
   speak(instruction(route.steps[0]));
 
   if (simulated) {
@@ -470,8 +455,8 @@ function stopNav() {
   const nav = state.nav;
   if (!nav) return;
   clearInterval(nav.simTimer);
-  nav.wakeLock?.release();
-  speechSynthesis?.cancel();
+  keepScreenOn(false);
+  stopSpeaking();
   state.nav = null;
   for (const id of ['nav-banner', 'nav-footer', 'nav-alert']) $(id).classList.add('hidden');
   document.body.classList.remove('navigating');
@@ -577,7 +562,7 @@ function applyLang() {
   $('go-btn').textContent = s.go;
   $('simulate-btn').textContent = s.simulate;
   $('stop-btn').textContent = s.stop;
-  $('status-text').textContent = $('status').classList.contains('live') ? s.live : s.offline;
+  $('status-text').textContent = statusText();
   if (state.routes.length && !state.nav) renderRoutes();
 }
 
@@ -589,3 +574,7 @@ $('lang-btn').onclick = () => {
 applyLang();
 loadReports();
 connectStream();
+
+if ('serviceWorker' in navigator && !globalThis.Capacitor?.isNativePlatform?.() && isSecureContext) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}

@@ -1,0 +1,34 @@
+name: Android APK
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+      - run: npm test
+      # Set the repository variable API_URL to your deployed server so reports
+      # are shared; without it the app keeps reports on each phone.
+      - run: npm run build:app
+        env:
+          API_URL: ${{ vars.API_URL }}
+      - run: ./gradlew assembleDebug --no-daemon
+        working-directory: android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selokbelok-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk

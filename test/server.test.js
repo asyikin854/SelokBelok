@@ -51,3 +51,12 @@ test('streams new reports over SSE', async () => {
   assert.match(text, /"type":"flood"/);
   ctrl.abort();
 });
+
+test('allows cross-origin calls from the mobile app', async () => {
+  const pre = await fetch(`${base}/api/reports`, { method: 'OPTIONS', headers: { Origin: 'https://localhost', 'Access-Control-Request-Method': 'POST' } });
+  assert.equal(pre.status, 204);
+  assert.equal(pre.headers.get('access-control-allow-origin'), '*');
+  assert.match(pre.headers.get('access-control-allow-headers'), /Content-Type/);
+  const res = await fetch(`${base}/api/health`, { headers: { Origin: 'https://localhost' } });
+  assert.equal(res.headers.get('access-control-allow-origin'), '*');
+});

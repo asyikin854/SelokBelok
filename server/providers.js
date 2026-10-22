@@ -1,10 +1,13 @@
 // Thin, cached proxies for third-party map services. Proxying lets us send a
 // proper User-Agent (required by the Nominatim usage policy), keep searches
 // scoped to Malaysia, and swap in self-hosted OSRM / Nominatim via env vars.
-import { MALAYSIA_BOUNDS, inMalaysia, haversine } from '../public/js/geo.js';
+import { inMalaysia } from '../public/js/geo.js';
+import {
+  DEFAULT_NOMINATIM_URL, DEFAULT_OSRM_URL, searchUrl, parseSearch, sortByDistance, reverseUrl, parseReverse, routeUrl, parseRoute,
+} from '../public/js/mapServices.js';
 
-const NOMINATIM_URL = process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org';
-const OSRM_URL = process.env.OSRM_URL || 'https://router.project-osrm.org';
+const NOMINATIM_URL = process.env.NOMINATIM_URL || DEFAULT_NOMINATIM_URL;
+const OSRM_URL = process.env.OSRM_URL || DEFAULT_OSRM_URL;
 const USER_AGENT = process.env.USER_AGENT || 'SelokBelok/0.1 (https://github.com/asyikin854/SelokBelok)';
 
 export class ProviderError extends Error {
@@ -46,48 +49,24 @@ async function fetchJson(url) {
 export async function geocode(q, near) {
   q = String(q ?? '').trim();
   if (q.length < 2) return [];
-  const b = MALAYSIA_BOUNDS;
-  const params = new URLSearchParams({
-    q,
-    format: 'jsonv2',
-    countrycodes: 'my',
-    limit: '8',
-    addressdetails: '0',
-    'accept-language': 'ms,en',
-    viewbox: `${b.west},${b.north},${b.east},${b.south}`,
-  });
-  const key = params.toString();
-  let results = geocodeCache.get(key);
+  const url = searchUrl(NOMINATIM_URL, q);
+  let results = geocodeCache.get(url);
   if (!results) {
-    const raw = await fetchJson(`${NOMINATIM_URL}/search?${params}`);
-    results = [];
-    for (const p of raw) {
-      const r = { name: p.name || p.display_name.split(',')[0], address: p.display_name, lat: Number(p.lat), lng: Number(p.lon), kind: p.type };
-      // Nominatim often returns e.g. a station and its stop as separate hits.
-      if (!results.some((x) => x.name === r.name && haversine([x.lat, x.lng], [r.lat, r.lng]) < 200)) results.push(r);
-    }
-    geocodeCache.set(key, results);
+    results = parseSearch(await fetchJson(url));
+    geocodeCache.set(url, results);
   }
-  if (near) {
-    const [lat, lng] = near;
-    const d = (r) => (r.lat - lat) ** 2 + (r.lng - lng) ** 2;
-    results = [...results].sort((a, b) => d(a) - d(b));
-  }
-  return results;
+  return sortByDistance(results, near);
 }
 
 export async function reverseGeocode([lat, lng]) {
-  const params = new URLSearchParams({ lat, lon: lng, format: 'jsonv2', zoom: '17', 'accept-language': 'ms,en' });
   const key = `rev:${Number(lat).toFixed(4)},${Number(lng).toFixed(4)}`;
   const cached = geocodeCache.get(key);
   if (cached) return cached;
-  const p = await fetchJson(`${NOMINATIM_URL}/reverse?${params}`);
-  const result = { name: p.name || p.display_name?.split(',')[0] || '', address: p.display_name || '' };
+  const result = parseReverse(await fetchJson(reverseUrl(NOMINATIM_URL, [lat, lng])));
   geocodeCache.set(key, result);
   return result;
 }
 
-// Returns up to 3 driving routes as { distance, duration, coords: [[lat,lng]], steps }.
 export async function route(from, to) {
   for (const p of [from, to]) {
     if (!inMalaysia(p)) throw new ProviderError('Route endpoints must be in Malaysia', 400);
@@ -95,30 +74,12 @@ export async function route(from, to) {
   const key = [...from, ...to].map((n) => n.toFixed(5)).join(',');
   const cached = routeCache.get(key);
   if (cached) return cached;
-
-  const path = `${from[1]},${from[0]};${to[1]},${to[0]}`;
-  const params = new URLSearchParams({ alternatives: '3', steps: 'true', geometries: 'geojson', overview: 'full' });
-  const raw = await fetchJson(`${OSRM_URL}/route/v1/driving/${path}?${params}`);
-  if (raw.code !== 'Ok') throw new ProviderError(raw.message || raw.code || 'No route found', 404);
-
-  const routes = raw.routes.map((r) => ({
-    distance: r.distance,
-    duration: r.duration,
-    summary: r.legs.map((l) => l.summary).filter(Boolean).join(', '),
-    coords: r.geometry.coordinates.map(([lng, lat]) => [lat, lng]),
-    steps: r.legs.flatMap((l) =>
-      l.steps.map((s) => ({
-        type: s.maneuver.type,
-        modifier: s.maneuver.modifier ?? null,
-        exit: s.maneuver.exit ?? null,
-        name: s.name || s.ref || '',
-        ref: s.ref || '',
-        distance: s.distance,
-        duration: s.duration,
-        location: [s.maneuver.location[1], s.maneuver.location[0]],
-      })),
-    ),
-  }));
+  let routes;
+  try {
+    routes = parseRoute(await fetchJson(routeUrl(OSRM_URL, from, to)));
+  } catch (err) {
+    throw err instanceof ProviderError ? err : new ProviderError(err.message, 404);
+  }
   routeCache.set(key, routes);
   return routes;
 }

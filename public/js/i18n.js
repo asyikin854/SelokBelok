@@ -40,6 +40,7 @@ const STRINGS = {
     km: 'km',
     m: 'm',
     live: 'Langsung',
+    deviceOnly: 'Peranti ini sahaja',
     offline: 'Luar talian',
     types: {
       jam: 'Kesesakan',
@@ -134,6 +135,7 @@ const STRINGS = {
     km: 'km',
     m: 'm',
     live: 'Live',
+    deviceOnly: 'This device only',
     offline: 'Offline',
     types: {
       jam: 'Traffic jam',

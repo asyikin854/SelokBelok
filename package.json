@@ -1,14 +1,28 @@
 {
   "name": "selokbelok",
-  "version": "0.1.0",
-  "description": "Community-driven navigation for Malaysia — live traffic, police, flood and hazard reports, Waze-style.",
+  "version": "0.2.0",
+  "description": "Community-driven navigation for Malaysia \u2014 live traffic, police, flood and hazard reports, Waze-style.",
   "type": "module",
   "private": true,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "build:app": "node scripts/build-app.mjs && cap sync android",
+    "apk": "npm run build:app && cd android && ./gradlew assembleDebug"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@capacitor-community/keep-awake": "8.0.1",
+    "@capacitor-community/text-to-speech": "8.0.2",
+    "@capacitor/android": "8.5.3",
+    "@capacitor/core": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "leaflet": "1.9.4"
+  }
 }

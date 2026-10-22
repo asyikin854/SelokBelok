@@ -134,7 +134,16 @@ export function createApp({ store = new ReportStore() } = {}) {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     try {
-      if (url.pathname.startsWith('/api/')) await handleApi(req, res, url);
+      if (url.pathname.startsWith('/api/')) {
+        // The mobile app loads from its own origin (https://localhost), so the API allows any origin.
+        // It uses no cookies, so this exposes nothing a direct request couldn't get.
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '86400' });
+          return res.end();
+        }
+        await handleApi(req, res, url);
+      }
       else if (req.method === 'GET' || req.method === 'HEAD') await serveStatic(req, res, url);
       else json(res, 405, { error: 'Method not allowed' });
     } catch (err) {

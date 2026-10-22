@@ -1,0 +1,9 @@
+{
+  "appId": "my.selokbelok.app",
+  "appName": "SelokBelok",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {}
+}
